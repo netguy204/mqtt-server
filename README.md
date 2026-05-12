@@ -10,7 +10,7 @@ Designed to be destroyed and recreated on demand — the entire broker is one
 ## What it builds
 
 - VPC + public subnet + IGW + route table (10.0.0.0/16)
-- Security group: inbound TCP 8883 (MQTTS) only
+- Security group: inbound TCP 8883 (MQTTS) and 1883 (plaintext MQTT)
 - t3.micro EC2 instance, Ubuntu 24.04, Elastic IP attached
 - IAM role with SSM Session Manager + scoped Route53 write (for certbot)
 - Route53 hosted zone for `<subdomain>.<parent_domain>`, delegated from your

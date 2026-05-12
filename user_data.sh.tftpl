@@ -57,6 +57,9 @@ listener 8883
 protocol mqtt
 certfile /etc/mosquitto/certs/fullchain.pem
 keyfile  /etc/mosquitto/certs/privkey.pem
+
+listener 1883
+protocol mqtt
 MOSQ
 chown root:mosquitto /etc/mosquitto/conf.d/broker.conf
 chmod 0640 /etc/mosquitto/conf.d/broker.conf

@@ -83,13 +83,22 @@ data "aws_ami" "ubuntu" {
 
 resource "aws_security_group" "broker" {
   name        = "mqtt-broker"
-  description = "MQTT broker: MQTTS 8883 inbound, all egress."
+  description = "MQTT broker: MQTTS 8883 + MQTT 1883 inbound, all egress."
   vpc_id      = aws_vpc.main.id
 
   ingress {
     description = "MQTTS"
     from_port   = 8883
     to_port     = 8883
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description = "MQTT (plaintext)"
+    from_port   = 1883
+    to_port     = 1883
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
