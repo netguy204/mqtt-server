@@ -1,0 +1,69 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee /var/log/mqtt-bootstrap.log) 2>&1
+
+FQDN="${fqdn}"
+EMAIL="${letsencrypt_email}"
+export AWS_DEFAULT_REGION="${aws_region}"
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y mosquitto certbot python3-certbot-dns-route53
+
+# Seed mosquitto password file from the Terraform-provided user map.
+install -d -m 0755 -o root -g root /etc/mosquitto
+: > /etc/mosquitto/passwd
+chown mosquitto:mosquitto /etc/mosquitto/passwd
+chmod 0640 /etc/mosquitto/passwd
+%{ for user, pass in mqtt_users ~}
+mosquitto_passwd -b /etc/mosquitto/passwd '${user}' '${replace(pass, "'", "'\\''")}'
+%{ endfor ~}
+
+# Acquire the TLS certificate via Route53 DNS-01. Retry until DNS delegation
+# from the parent domain has propagated (NS records added at Squarespace).
+until certbot certonly --non-interactive --agree-tos --email "$EMAIL" \
+    --dns-route53 -d "$FQDN" --keep-until-expiring; do
+  echo "certbot failed (likely waiting for NS delegation); retrying in 60s..."
+  sleep 60
+done
+
+# Mosquitto runs as the `mosquitto` user, which can't read /etc/letsencrypt/live
+# by default. A renewal deploy-hook copies the live cert into a mosquitto-owned
+# directory and reloads the broker.
+install -d -m 0750 -o mosquitto -g mosquitto /etc/mosquitto/certs
+
+cat >/etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh <<HOOK
+#!/bin/bash
+set -euo pipefail
+SRC=/etc/letsencrypt/live/$FQDN
+DST=/etc/mosquitto/certs
+install -m 0640 -o mosquitto -g mosquitto "\$SRC/fullchain.pem" "\$DST/fullchain.pem"
+install -m 0640 -o mosquitto -g mosquitto "\$SRC/privkey.pem"   "\$DST/privkey.pem"
+systemctl reload mosquitto || systemctl restart mosquitto
+HOOK
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
+
+# Run the hook once to populate the initial cert.
+/etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
+
+# Ubuntu's default mosquitto.conf includes /etc/mosquitto/conf.d/*.conf, so
+# we just drop our listener config there and leave the rest of the defaults
+# (logging to /var/log/mosquitto/, persistence) alone.
+cat >/etc/mosquitto/conf.d/broker.conf <<MOSQ
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+
+listener 8883
+protocol mqtt
+certfile /etc/mosquitto/certs/fullchain.pem
+keyfile  /etc/mosquitto/certs/privkey.pem
+MOSQ
+chown root:mosquitto /etc/mosquitto/conf.d/broker.conf
+chmod 0640 /etc/mosquitto/conf.d/broker.conf
+
+systemctl enable --now mosquitto
+systemctl restart mosquitto
+
+# certbot.timer is installed with the certbot package and renews automatically;
+# the deploy hook above reloads mosquitto on each successful renewal.
+systemctl enable --now certbot.timer
